@@ -1,12 +1,13 @@
 
 
 # Configure the AWS Provider
+#authenticate the environment using aws cli to avoid storing of access keys physically
 provider "aws" {
-  region = "us-east-1"
+  region = var.region
 }
 
 resource "aws_vpc" "vpc" {
-  cidr_block = "10.1.0.0/16"
+  cidr_block = var.vpc_cidr
   tags = {
     Name="vpc01"
   }
@@ -25,11 +26,11 @@ resource "aws_internet_gateway_attachment" "ig_vpc_attachment" {
 
 resource "aws_subnet" "subnet" {
   vpc_id = aws_vpc.vpc.id
-  availability_zone = "us-east-1a"
-  cidr_block = "10.1.1.0/24"
-  map_public_ip_on_launch = true
+  availability_zone = lookup(var.subnet_info,"az","us-east-1a")
+  cidr_block = lookup(var.subnet_info,"cidr","no cidr provided")
+  map_public_ip_on_launch = lookup(var.subnet_info,"public_ip","false")
   tags = {
-    Name = "subnet01"
+    Name = lookup(var.subnet_info,"name","subnet1")
   }
 }
 
@@ -44,8 +45,8 @@ resource "aws_route_table" "pub_rt" {
     cidr_block = "0.0.0.0/0"
     gateway_id = aws_internet_gateway.internet_gateway.id
  }
-} 
-
+}
+ 
 resource "aws_route_table_association" "rt_association" {
  subnet_id = aws_subnet.subnet.id
  route_table_id = aws_route_table.pub_rt.id 
@@ -53,7 +54,7 @@ resource "aws_route_table_association" "rt_association" {
 
 #creating an s3 bucket
 resource "aws_s3_bucket" "bucket1" {
-  bucket = "venky23867325"
+  bucket = var.bucketName
   force_destroy = true
 }
 resource "aws_s3_bucket_ownership_controls" "object_ownership" {
@@ -84,15 +85,15 @@ resource "aws_s3_bucket_acl" "bucket_acl" {
 
 #uploading an object to s3 bucket
 resource "aws_s3_object" "object" {
-  acl = "public-read-write"
+  acl = "public-read"
   bucket = aws_s3_bucket.bucket1.bucket
-  key    = "index.html"
-  source = "index.html"
+  key    = var.object_name_in_s3
+  source = var.object_path
   force_destroy = true
 }
 # creating an IAM role for ec2 instance to access object in s3 bucket
 resource "aws_iam_role" "ec2_s3_role" {
-  name = "ec2_role"
+  name = var.IAM_role_name
   assume_role_policy = jsonencode({ # assume role policy grant the entity the required permissions to assume this role
     Version = "2012-10-17"
     Statement = [
@@ -121,7 +122,7 @@ resource "aws_iam_role" "ec2_s3_role" {
       ]
     })
   }
-  managed_policy_arns = [] # define the set of aws managetd policy arns if needed to use or create a custome managed policy using
+  managed_policy_arns = [] # define the set of aws managetd policy arns if needed to use or create a custome managed policy
 }
 
 #creatins a security group for ec2 instance
@@ -149,8 +150,8 @@ resource "aws_security_group" "sg01" {
 
 #providnig the created key-pair to aws
 resource "aws_key_pair" "key" {
-  key_name = "terraform"
-  public_key = file("terraform.pub")
+  key_name = var.keypair
+  public_key = file(var.pub_key)
 }
 
 #creating an iam_instance_profile to assiate IAM service role to ec2 instance
@@ -159,12 +160,12 @@ resource "aws_iam_instance_profile" "test_profile" {
   role = aws_iam_role.ec2_s3_role.name
 }
 
-#creating an ec2 instace that assume the abouve created role
+#creating an ec2 instace that assume the above created role
 resource "aws_instance" "instance1" {
-  ami = "ami-07d9b9ddc6cd8dd30"
-  instance_type = "t2.micro"
+  ami = var.instance_ami
+  instance_type = var.instance_type
   subnet_id = aws_subnet.subnet.id
-  key_name = "terraform"
+  key_name = var.keypair
   security_groups = [aws_security_group.sg01.id]
   iam_instance_profile = aws_iam_instance_profile.test_profile.name
   user_data = <<-EOF
@@ -174,10 +175,10 @@ resource "aws_instance" "instance1" {
   cat <<eof | sudo tee /var/www/html/index.html
   <html>
   <head>
-  <p>i am venkateswara reddy</p>
+  <p>${var.default_text}</p>
   </head>
   <body>
-  <p>clink on the<a href="https:${aws_s3_bucket.bucket1.bucket}.s3.amazonaws.com/index.html//">link</a></p>
+  <p>clink on the<a href="https:${aws_s3_bucket.bucket1.bucket}.s3.amazonaws.com/${aws_s3_object.object.key}">link to download the document</a></p>
   </body>
   </html>
   eof
